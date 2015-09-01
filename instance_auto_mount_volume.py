@@ -58,21 +58,6 @@ volume_name="test-vol"
 key_name_pub = "cloud_pub_key"
 key_name_pri = "cloud_pri_key"
 
-# User data
-user_ops = """#!/usr/bin/env bash
-
-LABLE=$(sudo lsblk | grep vdb | cut -c -3)
-
-for i in $(seq 1 60)
-do
-    sleep 2
-    if [ -n $LABLE ]; then
-        sudo mkfs.ext4 /dev/vdb
-        sudo mount /dev/vdb /mnt
-        exit 0
-    fi
-done
-"""
 
 def get_network_id():
     networks = nova.networks.list()
@@ -113,16 +98,17 @@ def flavor_create_or_delete(flag=True):
 def instance_create_or_delete(flag=True):
     instance_id = None
     if True == flag:
+        # Create flavor
         get_flavor_id = flavor_create_or_delete()
+        # Upload image
         get_image_id = image_upload_or_drop()
         instance = nova.servers.create(vm_name,
                                        get_image_id,
                                        get_flavor_id,
                                        key_name=key_name_pub,
-                                       userdata=user_ops,
                                        nics=[{'net-id': get_network_id()}])
         instance_id = instance.id
-        print "The instance %s has been created successfully!" % (instance_id)
+        print "The instance %s has been created!" % (instance_id)
         return instance_id
     else:
         vms = nova.servers.list()
@@ -178,6 +164,19 @@ def allocate_fip_to_instance(instance, flag=True):
     fip = nova.floating_ips.create(pool="public")
     nova.servers.add_floating_ip(instance, fip.ip)
     print "The %s has allocated to the instance %s!" % (fip.ip, instance)
+    return fip.ip
+
+def format_mount_volume(fip):
+    comm = 'ssh -i cloud_pri_key -o StrictHostKeyChecking=no ubuntu@%s "sudo mkfs.ext4 /dev/vdb && sudo mount /dev/vdb /mnt"' % (fip)
+    print "Formatting a disk /dev/vdb, and mount it to /mnt."
+
+    while True:
+        ret = os.system(comm)
+        if ret == 0:
+            break
+        else:
+            time.sleep(2)
+            continue
 
 # All clean resource
 def clean_all(flag=False):
@@ -186,6 +185,14 @@ def clean_all(flag=False):
 
     image_upload_or_drop(flag)
     keys_create_or_delete(flag)
+
+    # Delete floating_ips
+    fips = nova.floating_ips.list()
+    for fip in fips:
+        if fip.instance_id == instance_id:
+            nova.floating_ips.delete(fip.id)
+            print "Floating ip %s has been deleted!" % (fip.ip)
+            break
 
     # Waiting instance to be deleted
     while True:
@@ -199,14 +206,6 @@ def clean_all(flag=False):
             print "The instance %s has been deleted!" % (instance_id)
             break
 
-    # Delete floating_ips
-    fips = nova.floating_ips.list()
-    for fip in fips:
-        if fip.instance_id == instance_id:
-            nova.floating_ips.delete(fip.id)
-            print "Floating ip %s has been deleted!" % (fip.ip)
-            break
-
     # Delete volume
     volume_create_or_delete(flag)
 
@@ -214,7 +213,16 @@ def main():
     print "All clean everthing...."
     clean_all()
 
+    # Generate keypairs
+    keys_create_or_delete()
+
+    # Create instance
+    get_instance_id = instance_create_or_delete()
+
+    # Create volume
     get_volume_id = volume_create_or_delete()
+
+    # Check volume status
     for count in range(0, timeout):
         time.sleep(1)
         vols = cinder.volumes.list()
@@ -225,11 +233,7 @@ def main():
         if vol.status == "available":
             break
 
-    print "The %s has finished!" % (get_volume_id)
-    keys_create_or_delete()
-
-    get_instance_id = instance_create_or_delete()
-
+    # Check instance volume
     for count in range(0, timeout):
         time.sleep(1)
         vms = nova.servers.list()
@@ -240,12 +244,36 @@ def main():
         if vm.status == "ACTIVE":
             break
 
-    allocate_fip_to_instance(get_instance_id)
-    print "The %s instance has finished!" % (get_instance_id)
+    # Allocate floating ip to instance
+    floating_ip = allocate_fip_to_instance(get_instance_id)
 
+    for count in range(0, timeout):
+        time.sleep(1)
+        fips = nova.floating_ips.list()
+        for fip in fips:
+            print "Floating ip %s allocate to instance %s!" % (floating_ip, get_instance_id)
+            if fip.ip == floating_ip:
+                break
+        if fip.instance_id is not None:
+            break
+
+    # Attach volume to instance
     mount_volume_to_instance(get_instance_id, get_volume_id)
     print "The volume %s has mounted to the instance %s!" % (get_instance_id, get_volume_id)
 
+    # Detection mounted volume status
+    for count in range(0, timeout):
+        time.sleep(1)
+        vols = cinder.volumes.list()
+        for vol in vols:
+            print "The current state of the %s is %s!" % (vol.name, vol.status)
+            if vol.id == get_volume_id:
+                break
+        if vol.status == "in-use":
+            break
+
+    # Format and mount volume
+    format_mount_volume(floating_ip)
 
 if __name__=="__main__":
     main()
