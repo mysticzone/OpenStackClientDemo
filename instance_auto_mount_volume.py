@@ -65,8 +65,6 @@ KEY_NAME_PRI = "cloud_pri_key"
 COMM_MOUNT = "sudo mkfs.ext4 /dev/vdb"
 COMM_FORMAT = "sudo mount /dev/vdb /mnt"
 
-
-
 def get_network_id():
     networks = nova.networks.list()
     network_id = networks[0].id
@@ -178,6 +176,7 @@ def allocate_fip_to_instance(instance):
     return fip.ip
 
 def format_mount_volume(fip):
+
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
