@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# coding:utf-8
 
 from cinderclient import client as cinderclient
 from glanceclient import Client as glanceclient
@@ -8,6 +9,8 @@ from novaclient import client as novaclient
 
 import time
 import os
+import paramiko
+import socket
 
 AUTH_URL = "http://200.21.4.45:5000/v2.0"
 USERNAME = "admin"
@@ -35,28 +38,28 @@ cinder = cinderclient.Client("2",
                              AUTH_URL)
 
 # Time Out
-timeout = 120
+TIMEOUT = 120
 
 # Instance Name
-vm_name = "test1"
+VM_NAME = "test1"
 
 # Define Flavor
-flavor_name = "2U2G20"
-flavor_mem = 2048
-flavor_cpu = 2
-flavor_disk = 20
+FLAVOR_NAME = "2U2G20"
+FLAVOR_MEM = 2048
+FLAVOR_CPU = 2
+FLAVOR_DISK = 20
 
 # Image Information
-image_name = "Test Image"
-image_path = "/home/stack/trusty-server-cloudimg-amd64-disk1.img"
+IMAGE_NAME = "Test Image"
+IMAGE_PATH = "/home/stack/trusty-server-cloudimg-amd64-disk1.img"
 
 # Define Volume
-volume_size=2
-volume_name="test-vol"
+VOLUME_SIZE = 2
+VOLUME_NAME = "test-vol"
 
 ## Generate keyparis
-key_name_pub = "cloud_pub_key"
-key_name_pri = "cloud_pri_key"
+KEY_NAME_PUB = "cloud_pub_key"
+KEY_NAME_PRI = "cloud_pri_key"
 
 
 def get_network_id():
@@ -64,127 +67,146 @@ def get_network_id():
     network_id = networks[0].id
     return network_id
 
-def volume_create_or_delete(flag=True):
-    if True == flag:
-        volume = cinder.volumes.create(name=volume_name, size=volume_size)
-        volume_id = volume.id
+def create_volume():
+    volume = cinder.volumes.create(name=VOLUME_NAME, size=VOLUME_SIZE)
+    volume_id = volume.id
 
-        print "The volume %s has been created!" % (volume_id)
-        return volume_id
-    else:
-        volumes = cinder.volumes.list()
-        for volume in volumes:
-            if volume.name == volume_name:
-                cinder.volumes.delete(volume.id)
-                print "The volume %s has been deleted successfully!" % (volume_name)
+    print "The volume %s has been created!" % (volume.name)
+    return volume_id
 
-def flavor_create_or_delete(flag=True):
-    if True == flag:
-        flavor = nova.flavors.create(flavor_name,
-                                     flavor_mem,
-                                     flavor_cpu,
-                                     flavor_disk)
-        flavor_id = flavor.id
-        print "The flavor %s has been created!" % flavor_id
-        return flavor_id
-    else:
-        flavors = nova.flavors.list()
-        for item in flavors:
-            if item.name == flavor_name:
-                flavor_id = item.id
-                nova.flavors.delete(flavor_id)
-                print "The flavor %s has been deleted!" % flavor_id
+def delete_volume():
+    volumes = cinder.volumes.list()
+    for volume in volumes:
+        if volume.name == VOLUME_NAME:
+            cinder.volumes.delete(volume.id)
+            print "The volume %s has been deleted successfully!" % (volume.name)
 
-def instance_create_or_delete(flag=True):
+def create_flavor():
+    flavor = nova.flavors.create(FLAVOR_NAME,
+                                 FLAVOR_MEM,
+                                 FLAVOR_CPU,
+                                 FLAVOR_DISK)
+    print "The flavor %s has been created!" % flavor.name
+    return flavor.id
+
+def delete_flavor():
+    flavors = nova.flavors.list()
+    for flavor in flavors:
+        if flavor.name == FLAVOR_NAME:
+            nova.flavors.delete(flavor.id)
+            print "The flavor %s has been deleted!" % flavor.name
+
+def create_instance():
     instance_id = None
-    if True == flag:
-        # Create flavor
-        get_flavor_id = flavor_create_or_delete()
-        # Upload image
-        get_image_id = image_upload_or_drop()
-        instance = nova.servers.create(vm_name,
-                                       get_image_id,
-                                       get_flavor_id,
-                                       key_name=key_name_pub,
+    # Create flavor
+    flavor_id = create_flavor()
+    # Upload image
+    image_id = upload_image()
+    # Create vm
+    instance = nova.servers.create(VM_NAME,
+                                       image_id,
+                                       flavor_id,
+                                       key_name=KEY_NAME_PUB,
                                        nics=[{'net-id': get_network_id()}])
-        instance_id = instance.id
-        print "The instance %s has been created!" % (instance_id)
-        return instance_id
-    else:
-        vms = nova.servers.list()
-        # Delete the instance
-        for vm in vms:
-            if vm.name == vm_name:
-                instance_id = vm.id
-                nova.servers.delete(instance_id)
-                print "The instance %s has been deleted!" % (instance_id)
-                break
-        return instance_id
 
-def keys_create_or_delete(flag=True):
-    if True == flag:
-        keypairs = nova.keypairs.create(key_name_pub)
-        fp = os.open(key_name_pri, os.O_WRONLY | os.O_CREAT, 0o600)
-        with os.fdopen(fp, 'w') as f:
-                 f.write(keypairs.private_key)
-        print "The %s has been created!" % (key_name_pub)
-    else:
-        keys = nova.keypairs.list()
-        for key in keys:
-            if key.name == key_name_pub:
-                nova.keypairs.delete(key.id)
-                print "The %s have been deleted!" % (key_name_pub)
-                break
+    print "The instance %s has been created!" % (instance.id)
+    return instance.id
 
-def image_upload_or_drop(flag=True):
-    if True == flag:
-        image = glance.images.create(name=image_name,
-                                     disk_format="qcow2",
-                                     container_format="bare",
-                                     visibility="public")
-        glance.images.upload(image.id, open(image_path, "rb"))
-        print "The image %s has been uploaded!" % image_path.split("/")[3]
-        return image.id
-    else:
-        images = glance.images.list()
-        try:
-            while True:
-                image = images.next()
-                if image["name"] == image_name:
-                    glance.images.delete(image["id"])
-                    print "The image %s has been deleted!" % (image_name)
-        except StopIteration:
-            pass
+def delete_instance():
+    instance_id = None
+    vms = nova.servers.list()
+
+    # Delete the instance
+    for vm in vms:
+        if vm.name == VM_NAME:
+            instance_id = vm.id
+            nova.servers.delete(vm.id)
+            print "The instance %s will be deleted!" % (vm.name)
+
+    return instance_id
+
+def create_keypair():
+    keypairs = nova.keypairs.create(KEY_NAME_PUB)
+    fp = os.open(KEY_NAME_PRI, os.O_WRONLY | os.O_CREAT, 0o600)
+
+    with os.fdopen(fp, 'w') as f:
+             f.write(keypairs.private_key)
+    print "The %s has been created!" % (KEY_NAME_PUB)
+
+def delete_keypair():
+    keys = nova.keypairs.list()
+    for key in keys:
+        if key.name == KEY_NAME_PUB:
+            nova.keypairs.delete(key.id)
+            print "The %s have been deleted!" % (KEY_NAME_PUB)
+
+def upload_image():
+    image = glance.images.create(name=IMAGE_NAME,
+                                 disk_format="qcow2",
+                                 container_format="bare",
+                                 visibility="public")
+
+    glance.images.upload(image.id, open(IMAGE_PATH, "rb"))
+    print "The image %s has been uploaded!" % IMAGE_PATH.split("/")[3]
+    return image.id
+
+def delete_image():
+    images = glance.images.list()
+    try:
+        while True:
+            image = images.next()
+            if image["name"] == IMAGE_NAME:
+                glance.images.delete(image["id"])
+                print "The image %s has been deleted!" % (IMAGE_NAME)
+                break
+    except StopIteration:
+        print "Delete Image Occur Error!"
 
 def mount_volume_to_instance(instance, volume):
     nova.volumes.create_server_volume(instance, volume, "/dev/vdb")
-    print "The volume %s has mount to instance %s!" % (volume_name, vm_name)
+    print "The volume %s has mount to instance %s!" % (VOLUME_NAME, VM_NAME)
 
-def allocate_fip_to_instance(instance, flag=True):
+def allocate_fip_to_instance(instance):
     fip = nova.floating_ips.create(pool="public")
     nova.servers.add_floating_ip(instance, fip.ip)
-    print "The %s has allocated to the instance %s!" % (fip.ip, instance)
+    print "The %s has been allocated to the instance!" % (fip.ip)
     return fip.ip
 
 def format_mount_volume(fip):
-    comm = 'ssh -i cloud_pri_key -o StrictHostKeyChecking=no ubuntu@%s "sudo mkfs.ext4 /dev/vdb && sudo mount /dev/vdb /mnt"' % (fip)
-    print "Formatting a disk /dev/vdb, and mount it to /mnt."
+    COMM_MOUNT = "sudo mkfs.ext4 /dev/vdb"
+    COMM_FORMAT = "sudo mount /dev/vdb /mnt"
 
+    ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    ## Modified exception handling
     while True:
-        ret = os.system(comm)
-        if ret == 0:
+        try:
+            ssh.connect(fip, username="ubuntu", key_filename=KEY_NAME_PRI)
+            print "Connecting Successfully!"
             break
-        else:
-            time.sleep(2)
+        except socket.error,e:
+            print "Connection Failed because %s!!!!" % e
+            time.sleep(1)
             continue
 
-# All clean resource
-def clean_all(flag=False):
-    instance_id = instance_create_or_delete(flag)
-    flavor_create_or_delete(flag)
+    ## More information output
+    stdin, stdout, stderr = ssh.exec_command(COMM_MOUNT)
+    print stdout.read()
+    ssh.exec_command(COMM_FORMAT)
 
-    image_upload_or_drop(flag)
-    keys_create_or_delete(flag)
+
+def clean_all():
+    """ All Clean Resource"""
+    # Delete vm
+    instance_id = delete_instance()
+    # Delete flavor
+    delete_flavor()
+
+    # Drop image
+    delete_image()
+    # Delete keypair
+    delete_keypair()
 
     # Delete floating_ips
     fips = nova.floating_ips.list()
@@ -192,88 +214,87 @@ def clean_all(flag=False):
         if fip.instance_id == instance_id:
             nova.floating_ips.delete(fip.id)
             print "Floating ip %s has been deleted!" % (fip.ip)
-            break
 
     # Waiting instance to be deleted
-    while True:
-        vms = nova.servers.list()
-        for vm in vms:
-            if vm.id == instance_id:
-                print "Waiting for the instance %s to be deleted!" % (instance_id)
-                time.sleep(1)
-                break
-        else:
-            print "The instance %s has been deleted!" % (instance_id)
+    for count in xrange(0, TIMEOUT):
+        time.sleep(1)
+        try:
+            vm_state = nova.servers.get(instance_id)
+        except Exception:
+            vm_state = None
+
+        if vm_state is None:
+            print "The instance has been deleted!"
             break
+        else:
+            print "Waiting for the instance to be deleted!"
+    else:
+        print "Instance %s delete fails!!!!" % vm_state.name
 
     # Delete volume
-    volume_create_or_delete(flag)
+    delete_volume()
 
 def main():
     print "All clean everthing...."
     clean_all()
 
     # Generate keypairs
-    keys_create_or_delete()
+    create_keypair()
 
     # Create instance
-    get_instance_id = instance_create_or_delete()
+    instance_id = create_instance()
 
     # Create volume
-    get_volume_id = volume_create_or_delete()
+    volume_id = create_volume()
 
-    # Check volume status
-    for count in range(0, timeout):
+    # Check instance status
+    for count in xrange(0, TIMEOUT):
         time.sleep(1)
-        vols = cinder.volumes.list()
-        for vol in vols:
-            print "The current state of the %s is %s!" % (vol.name, vol.status)
-            if vol.id == get_volume_id:
-                break
-        if vol.status == "available":
-            break
-
-    # Check instance volume
-    for count in range(0, timeout):
-        time.sleep(1)
-        vms = nova.servers.list()
-        for vm in vms:
-            print "The current state of the %s is %s" % (vm_name, vm.status)
-            if vm.id == get_instance_id:
-                break
+        vm = nova.servers.get(instance_id)
         if vm.status == "ACTIVE":
+            print "The current state of the instance is OK!"
             break
+        else:
+            print "The current state of the instance is %s" % (vm.status)
+    else:
+        print "The instance %s status is currently UNAVAILABLE!!!!" % (vm.name)
 
     # Allocate floating ip to instance
-    floating_ip = allocate_fip_to_instance(get_instance_id)
+    floating_ip = allocate_fip_to_instance(instance_id)
 
-    for count in range(0, timeout):
+    # Check volume status
+    for count in xrange(0, TIMEOUT):
         time.sleep(1)
-        fips = nova.floating_ips.list()
-        for fip in fips:
-            print "Floating ip %s allocate to instance %s!" % (floating_ip, get_instance_id)
-            if fip.ip == floating_ip:
-                break
-        if fip.instance_id is not None:
+        vol = cinder.volumes.get(volume_id)
+        if vol.status == "available":
+            print "The current state of the volume is OK!"
             break
+        else:
+            print "The current state of the volume is %s" % (vol.status)
+    else:
+        print "The volume %s status is currently UNAVAILABLE!!!!" % (vol.name)
 
     # Attach volume to instance
-    mount_volume_to_instance(get_instance_id, get_volume_id)
-    print "The volume %s has mounted to the instance %s!" % (get_instance_id, get_volume_id)
+    if vm.status == "ACTIVE" and vol.status == "available":
+        mount_volume_to_instance(instance_id, volume_id)
 
     # Detection mounted volume status
-    for count in range(0, timeout):
+    for count in xrange(0, TIMEOUT):
         time.sleep(1)
-        vols = cinder.volumes.list()
-        for vol in vols:
-            print "The current state of the %s is %s!" % (vol.name, vol.status)
-            if vol.id == get_volume_id:
-                break
+        vol = nova.volumes.get(volume_id)
         if vol.status == "in-use":
-            break
+            print "The volume has been mounted!"
 
-    # Format and mount volume
-    format_mount_volume(floating_ip)
+            # Format and mount volume
+            format_mount_volume(floating_ip)
+
+            break
+        else:
+            print "The current state of the volume mount is %s!" % (vol.status)
+    else:
+        print "The volume %s mount FAILs!!!!" % (vol.name)
+
 
 if __name__=="__main__":
     main()
+
