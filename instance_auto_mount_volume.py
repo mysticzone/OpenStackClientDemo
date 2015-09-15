@@ -150,7 +150,7 @@ def upload_image():
                                  visibility="public")
 
     glance.images.upload(image.id, open(IMAGE_PATH, "rb"))
-    print "The image %s has been uploaded!" % IMAGE_PATH.split("/")[3]
+    print "The image %s has been uploaded!" % IMAGE_PATH.split("/")[-1]
     return image.id
 
 def delete_image():
