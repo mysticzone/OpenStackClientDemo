@@ -31,12 +31,13 @@ OS_AUTH_TOKEN = auth.get_token(sess)
 glance = glanceclient('2', endpoint=OS_IMAGE_ENDPOINT, token=OS_AUTH_TOKEN)
 
 # Cinder Identity
-cinder = cinderclient.Client("2",
+# Default: version 2
+# Version 1
+cinder = cinderclient.Client("1",
                              USERNAME,
                              PASSWORD,
                              PROJECT_NAME,
                              AUTH_URL)
-
 # Time Out
 TIMEOUT = 120
 
@@ -61,9 +62,11 @@ VOLUME_NAME = "test-vol"
 KEY_NAME_PUB = "cloud_pub_key"
 KEY_NAME_PRI = "cloud_pri_key"
 
-# Define command
+# Define Command
 COMM_MOUNT = "sudo mkfs.ext4 /dev/vdb"
 COMM_FORMAT = "sudo mount /dev/vdb /mnt"
+
+
 
 def get_network_id():
     networks = nova.networks.list()
@@ -71,18 +74,18 @@ def get_network_id():
     return network_id
 
 def create_volume():
-    volume = cinder.volumes.create(name=VOLUME_NAME, size=VOLUME_SIZE)
+    volume = cinder.volumes.create(size=VOLUME_SIZE, display_name=VOLUME_NAME)
     volume_id = volume.id
 
-    print "The volume %s has been created!" % (volume.name)
+    print "The volume %s has been created!" % (volume.display_name)
     return volume_id
 
 def delete_volume():
     volumes = cinder.volumes.list()
     for volume in volumes:
-        if volume.name == VOLUME_NAME:
+        if volume.display_name == VOLUME_NAME:
             cinder.volumes.delete(volume.id)
-            print "The volume %s has been deleted successfully!" % (volume.name)
+            print "The volume %s has been deleted successfully!" % (volume.display_name)
 
 def create_flavor():
     flavor = nova.flavors.create(FLAVOR_NAME,
@@ -170,13 +173,13 @@ def mount_volume_to_instance(instance, volume):
     print "The volume %s has mount to instance %s!" % (VOLUME_NAME, VM_NAME)
 
 def allocate_fip_to_instance(instance):
-    fip = nova.floating_ips.create(pool="public")
+    fip = nova.floating_ips.create(pool="test")
+    # fip = nova.floating_ips.create(pool="public")
     nova.servers.add_floating_ip(instance, fip.ip)
     print "The %s has been allocated to the instance!" % (fip.ip)
     return fip.ip
 
 def format_mount_volume(fip):
-
     ssh = paramiko.SSHClient()
     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
@@ -266,6 +269,7 @@ def main():
     # Check volume status
     for count in xrange(0, TIMEOUT):
         time.sleep(1)
+
         vol = cinder.volumes.get(volume_id)
         if vol.status == "available":
             print "The current state of the volume is OK!"
@@ -282,7 +286,8 @@ def main():
     # Detection mounted volume status
     for count in xrange(0, TIMEOUT):
         time.sleep(1)
-        vol = nova.volumes.get(volume_id)
+        vol = cinder.volumes.get(volume_id)
+
         if vol.status == "in-use":
             print "The volume has been mounted!"
 
